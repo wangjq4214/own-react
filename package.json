@@ -1,0 +1,31 @@
+{
+  "name": "own-react",
+  "version": "0.0.1",
+  "description": "Implement simple React",
+  "main": "index.js",
+  "scripts": {
+    "start": "snowpack dev",
+    "build": "snowpack build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangjq4214/own-react.git"
+  },
+  "keywords": [
+    "React"
+  ],
+  "author": "wangjq4214",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/wangjq4214/own-react/issues"
+  },
+  "homepage": "https://github.com/wangjq4214/own-react#readme",
+  "devDependencies": {
+    "eslint": "^7.18.0",
+    "eslint-config-prettier": "^7.2.0",
+    "eslint-plugin-prettier": "^3.3.1",
+    "eslint-plugin-react": "^7.22.0",
+    "prettier": "^2.2.1",
+    "snowpack": "^3.0.11"
+  }
+}
