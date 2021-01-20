@@ -1,5 +1,6 @@
-function helloWorld() {
-  console.log('Hello World!');
-}
+import Own from './own';
+import { App } from './App';
 
-helloWorld();
+const container = document.getElementById('root');
+
+Own.render(App, container);
