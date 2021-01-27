@@ -113,6 +113,19 @@ function updateDom(dom, prevProps, nextProps) {
 }
 
 /**
+ * 执行删除
+ * @param {*} fiber
+ * @param {*} domParent
+ */
+function commitDeletion(fiber, domParent) {
+  if (fiber.dom) {
+    domParent.removeChild(fiber.dom);
+  } else {
+    commitDeletion(fiber.child, domParent);
+  }
+}
+
+/**
  * 将 fiber 节点进行提交
  * @param {*} fiber fiber 节点
  */
@@ -120,7 +133,13 @@ function commitWork(fiber) {
   if (!fiber) {
     return;
   }
-  const domParent = fiber.parent.dom;
+
+  // 自有 JSX 的没有实际的 DOM 从 fiber 中找出来
+  let domParentFiber = fiber.parent;
+  while (!domParentFiber.dom) {
+    domParentFiber = domParentFiber.parent;
+  }
+  const domParent = domParentFiber.dom;
 
   if (fiber.effectTag === 'PLACEMENT' && fiber.dom != null) {
     // 替换 tag 进行更新
@@ -130,7 +149,7 @@ function commitWork(fiber) {
     updateDom(fiber.dom, fiber.alternate.props, fiber.props);
   } else if (fiber.effectTag === 'DELETION') {
     // 删除 tag 删除节点
-    domParent.removeChild(fiber.dom);
+    commitDeletion(fiber, domParent);
   }
 
   commitWork(fiber.child);
@@ -263,19 +282,36 @@ function reconcileChildren(wipFiber, elements) {
   }
 }
 
+function updateFunctionComponent(fiber) {
+  const children = [fiber.type(fiber.props)];
+
+  reconcileChildren(fiber, children);
+}
+
+/**
+ * 自有组件更新
+ * @param {*} fiber
+ */
+function updateHostComponent(fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber);
+  }
+  reconcileChildren(fiber, fiber.props.children);
+}
+
 /**
  * 创建下一个 fiber 工作单元
  * @param {*} fiber 当前 fiber
  */
 function performUnitOfWork(fiber) {
-  // 创建 fiber 对应的 DOM
-  if (!fiber.dom) {
-    fiber.dom = createDom(fiber);
-  }
+  // 判断是否是函数式组件
+  const isFunctionComponent = fiber.type instanceof Function;
 
-  // 执行节点更新策略
-  const elements = fiber.props.children;
-  reconcileChildren(fiber, elements);
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber);
+  } else {
+    updateHostComponent(fiber);
+  }
 
   // 如果有子节点先返回子节点
   if (fiber.child) {
