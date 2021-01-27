@@ -1,5 +1,26 @@
+// 批量提交保存根
 let wipRoot = null;
+
+// 为了 diff 保存现在的节点
+let currentRoot = null;
+
+// 下一个 fiber 任务
 let nextUnitOfWork = null;
+
+// 跟踪需要删除的节点
+let deletions = null;
+
+// 判断是否是事件监听
+const isEvent = key => key.startsWith('on');
+
+// 判断是属性还是子节点
+const isProperty = key => key !== 'children' && !isEvent(key);
+
+// 判断是否是新属性
+const isNew = (prev, next) => key => prev[key] !== next[key];
+
+// 判断是否删除属性
+const isGone = (prev, next) => key => !(key in next);
 
 /**
  * 创建节点的描述对象
@@ -44,17 +65,51 @@ function createDom(fiber) {
       ? document.createTextNode('')
       : document.createElement(fiber.type);
 
-  // 过滤 children 属性的函数
-  const isProperty = key => key !== 'children';
-
-  // 将 Props 中的属性附加到节点中
-  Object.keys(fiber.props)
-    .filter(isProperty)
-    .forEach(name => {
-      dom[name] = fiber.props[name];
-    });
+  updateDom(dom, {}, fiber.props);
 
   return dom;
+}
+
+/**
+ * 更新节点
+ * @param {*} dom DOM 元素
+ * @param {*} prevProps
+ * @param {*} nextProps
+ */
+function updateDom(dom, prevProps, nextProps) {
+  // 移除旧的以及已经改变的事件监听
+  Object.keys(prevProps)
+    .filter(isEvent)
+    .filter(key => !(key in nextProps) || isNew(prevProps, nextProps)(key))
+    .forEach(name => {
+      const eventType = name.toLowerCase().substring(2);
+      dom.removeEventListener(eventType, prevProps[name]);
+    });
+
+  // 移除旧属性
+  Object.keys(prevProps)
+    .filter(isProperty)
+    .filter(isGone(prevProps, nextProps))
+    .forEach(name => {
+      dom[name] = '';
+    });
+
+  // 设置新的以及更新的属性
+  Object.keys(nextProps)
+    .filter(isProperty)
+    .filter(isNew(prevProps, nextProps))
+    .forEach(name => {
+      dom[name] = nextProps[name];
+    });
+
+  // 增加事件监听
+  Object.keys(nextProps)
+    .filter(isEvent)
+    .filter(isNew(prevProps, nextProps))
+    .forEach(name => {
+      const eventType = name.toLowerCase().substring(2);
+      dom.addEventListener(eventType, nextProps[name]);
+    });
 }
 
 /**
@@ -66,7 +121,18 @@ function commitWork(fiber) {
     return;
   }
   const domParent = fiber.parent.dom;
-  domParent.appendChild(fiber.dom);
+
+  if (fiber.effectTag === 'PLACEMENT' && fiber.dom != null) {
+    // 替换 tag 进行更新
+    domParent.appendChild(fiber.dom);
+  } else if (fiber.effectTag === 'UPDATE' && fiber.dom != null) {
+    // 更新 tag 进行更新
+    updateDom(fiber.dom, fiber.alternate.props, fiber.props);
+  } else if (fiber.effectTag === 'DELETION') {
+    // 删除 tag 删除节点
+    domParent.removeChild(fiber.dom);
+  }
+
   commitWork(fiber.child);
   commitWork(fiber.sibling);
 }
@@ -75,8 +141,13 @@ function commitWork(fiber) {
  * 提交更新
  */
 function commitRoot() {
+  // 删除需要删除的节点
+  deletions.forEach(commitWork);
+
   commitWork(wipRoot.child);
 
+  // 保存现在的 DOM 结构树
+  currentRoot = wipRoot;
   // 重设 root
   wipRoot = null;
 }
@@ -92,7 +163,10 @@ function render(element, container) {
     props: {
       children: [element],
     },
+    alternate: currentRoot,
   };
+
+  deletions = [];
 
   nextUnitOfWork = wipRoot;
 }
@@ -121,6 +195,75 @@ function workLoop(deadline) {
 }
 
 /**
+ * 节点更新 创建 删除算法
+ * @param {*} wipFiber 当前节点
+ * @param {*} elements 子节点
+ */
+function reconcileChildren(wipFiber, elements) {
+  // 节点索引
+  let index = 0;
+
+  // 判断是否有老节点需要 diff
+  let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
+
+  // 保存上一个节点 进行连接
+  let prevSibling = null;
+
+  while (index < elements.length || oldFiber != null) {
+    const element = elements[index];
+    let newFiber = null;
+
+    // 判断当前节点和更新后的节点是否是相同类型节点
+    const sameType = oldFiber && element && element.type === oldFiber.type;
+
+    // 如果相同类型, 只更新 Props 并且附加更新标记
+    if (sameType) {
+      newFiber = {
+        type: oldFiber.type,
+        props: element.props,
+        dom: oldFiber.dom,
+        parent: wipFiber,
+        alternate: oldFiber,
+        effectTag: 'UPDATE',
+      };
+    }
+
+    // 不同类型, 有新节点的
+    // 清空 DOM 重新设置 type Props
+    if (element && !sameType) {
+      newFiber = {
+        type: element.type,
+        props: element.props,
+        dom: null,
+        parent: wipFiber,
+        alternate: null,
+        effectTag: 'PLACEMENT',
+      };
+    }
+
+    // 如果节点是需要删除的 增加 tag 加入到删除数组中
+    if (oldFiber && !sameType) {
+      oldFiber.effectTag = 'DELETION';
+      deletions.push(oldFiber);
+    }
+
+    if (oldFiber) {
+      oldFiber = oldFiber.sibling;
+    }
+
+    // 将所有的 children 通过链表的方式串联起来
+    if (index === 0) {
+      wipFiber.child = newFiber;
+    } else if (element) {
+      prevSibling.sibling = newFiber;
+    }
+
+    prevSibling = newFiber;
+    index++;
+  }
+}
+
+/**
  * 创建下一个 fiber 工作单元
  * @param {*} fiber 当前 fiber
  */
@@ -130,29 +273,9 @@ function performUnitOfWork(fiber) {
     fiber.dom = createDom(fiber);
   }
 
-  // 将所有的 children 通过链表的方式串联起来
+  // 执行节点更新策略
   const elements = fiber.props.children;
-  let index = 0;
-  let prevSibling = null;
-  while (index < elements.length) {
-    const element = elements[index];
-
-    const newFiber = {
-      type: element.type,
-      props: element.props,
-      parent: fiber,
-      dom: null,
-    };
-
-    if (index === 0) {
-      fiber.child = newFiber;
-    } else {
-      prevSibling.sibling = newFiber;
-    }
-
-    prevSibling = newFiber;
-    index++;
-  }
+  reconcileChildren(fiber, elements);
 
   // 如果有子节点先返回子节点
   if (fiber.child) {
